@@ -1,0 +1,15 @@
+name: job-readiness-task-planner
+description: An OpenEnv environment where an AI agent turns vague job-readiness requests into structured actionable plans.
+version: "1.0.0"
+
+entrypoint:
+  server: server.py
+
+environment:
+  observation_type: json
+  action_type: json
+
+tasks:
+  - easy
+  - medium
+  - hard
