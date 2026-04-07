@@ -3,7 +3,7 @@ description: An OpenEnv environment where an AI agent turns vague job-readiness 
 version: "1.0.0"
 
 entrypoint:
-  server: server.py
+  server: server.app:app
 
 environment:
   observation_type: json

@@ -1,7 +1,9 @@
+from typing import Any
+
 from fastapi import FastAPI
-import uvicorn
-from my_env.env import JobReadinessEnv
 from pydantic import BaseModel
+
+from my_env.env import JobReadinessEnv
 
 app = FastAPI(title="Job Readiness Task Planner Environment")
 env = JobReadinessEnv()
@@ -13,7 +15,7 @@ class ResetRequest(BaseModel):
 
 class StepRequest(BaseModel):
     action_type: str
-    content: object = ""
+    content: Any = ""
 
 
 @app.get("/")
@@ -42,6 +44,7 @@ def step(req: StepRequest):
 
 
 def main():
+    import uvicorn
     uvicorn.run("server.app:app", host="0.0.0.0", port=8000)
 
 
