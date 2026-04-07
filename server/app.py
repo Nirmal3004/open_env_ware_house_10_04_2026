@@ -1,6 +1,7 @@
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi import HTTPException
 from pydantic import BaseModel
 
 from my_env.env import JobReadinessEnv
@@ -31,22 +32,23 @@ def reset(req: ResetRequest):
 
 @app.get("/state")
 def get_state():
+    if env.state is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Environment not initialized. Call /reset first.",
+        )
     return env.state_dict()
 
 
 @app.post("/step")
 def step(req: StepRequest):
-    result = env.step({
-        "action_type": req.action_type,
-        "content": req.content
-    })
+    try:
+        result = env.step(
+            {
+                "action_type": req.action_type,
+                "content": req.content,
+            }
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return result.model_dump()
-
-
-def main():
-    import uvicorn
-    uvicorn.run("server.app:app", host="0.0.0.0", port=8000)
-
-
-if __name__ == "__main__":
-    main()
