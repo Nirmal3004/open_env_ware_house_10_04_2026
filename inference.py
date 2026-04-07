@@ -1,8 +1,6 @@
 import requests
-import os
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
-MODEL_NAME = os.getenv("MODEL_NAME", "rule_based_baseline")
+from config import ENV_SERVER_URL, MODEL_NAME
 TASKS = ["easy", "medium", "hard"]
 
 
@@ -26,7 +24,7 @@ def log_end(success, steps, rewards):
 
 
 def post(path, payload):
-    url = f"{API_BASE_URL}{path}"
+    url = f"{ENV_SERVER_URL}{path}"
     return requests.post(url, json=payload, timeout=30).json()
 
 
