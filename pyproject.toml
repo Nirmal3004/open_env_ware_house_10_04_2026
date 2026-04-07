@@ -1,0 +1,22 @@
+[project]
+name = "aadil-env"
+version = "0.1.0"
+description = "OpenEnv Job Readiness Environment"
+authors = [
+  { name="Nirmal Raj", email="nirmalraj9607@gmail.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi",
+  "uvicorn",
+  "pydantic",
+  "requests",
+  "python-dotenv",
+  "openenv-core>=0.2.0"
+]
+
+[project.scripts]
+server = "server.app:app"
+
+[tool.openenv]
+env = "my_env.env:JobReadinessEnv"
