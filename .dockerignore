@@ -1,0 +1,9 @@
+.git
+.gitattributes
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+uv.lock
+validate-submission.sh

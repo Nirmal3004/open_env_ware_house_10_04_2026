@@ -1,11 +1,12 @@
 ---
-title: Job Readiness OpenEnv
+title: Aadil_env
 emoji: 🚀
 colorFrom: blue
 colorTo: green
 sdk: docker
-app_file: server/app.py
 pinned: false
+app_port: 7860
+startup_duration_timeout: 1h
 ---
 
 # Job Readiness OpenEnv
