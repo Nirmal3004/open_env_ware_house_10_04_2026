@@ -5,6 +5,7 @@ from requests import RequestException
 
 from config import API_BASE_URL, API_KEY, ENV_SERVER_URL, MODEL_NAME
 from my_env.env import WarehouseRobotEnv
+from my_env.graders import normalize_score
 from my_env.tasks import TASKS as TASK_DEFINITIONS
 from openai_client import get_openai_client
 
@@ -18,6 +19,7 @@ def log_start(task):
 
 
 def log_step(step, action, reward, done, error):
+    reward = normalize_score(reward)
     print(
         f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error or 'null'}",
         flush=True,
@@ -25,7 +27,7 @@ def log_step(step, action, reward, done, error):
 
 
 def log_end(success, steps, rewards):
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    rewards_str = ",".join(f"{normalize_score(r):.2f}" for r in rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
         flush=True,
@@ -231,7 +233,7 @@ def run_task(task_name):
     for action in generate_steps_with_llm(task_name):
         step_num += 1
         result = post("/step", action)
-        reward = result["reward"]
+        reward = normalize_score(result.get("reward"))
         done = result["done"]
         error = result.get("error")
         rewards.append(reward)

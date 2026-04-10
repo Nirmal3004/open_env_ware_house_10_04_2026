@@ -1,5 +1,27 @@
-def _clamp_score(score: float) -> float:
-    return round(min(max(score, 0.02), 0.98), 2)
+import math
+
+
+SAFE_MIN_SCORE = 0.01
+SAFE_MAX_SCORE = 0.99
+SAFE_FALLBACK_SCORE = 0.5
+
+
+def normalize_score(value) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return SAFE_FALLBACK_SCORE
+
+    if math.isnan(score) or math.isinf(score):
+        return SAFE_FALLBACK_SCORE
+
+    if score <= 0:
+        return SAFE_MIN_SCORE
+
+    if score >= 1:
+        return SAFE_MAX_SCORE
+
+    return round(score, 4)
 
 
 def grade_state(state, task):
@@ -54,10 +76,11 @@ def grade_state(state, task):
     for keyword in task["expected_keywords"]:
         if keyword.lower() in combined:
             hits += 1
+
     if task["expected_keywords"]:
         score += min(hits / len(task["expected_keywords"]), 1.0) * 0.08
 
     if state.done:
         score += 0.08
 
-    return _clamp_score(score)
+    return normalize_score(score)

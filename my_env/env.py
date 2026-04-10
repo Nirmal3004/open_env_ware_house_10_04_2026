@@ -1,7 +1,7 @@
 import copy
 from typing import Any
 
-from my_env.graders import grade_state
+from my_env.graders import grade_state, normalize_score
 from my_env.models import StepResult, WarehouseRobotPlannerState
 from my_env.tasks import TASKS
 
@@ -44,7 +44,7 @@ class WarehouseRobotEnv:
 
         if not isinstance(action, dict):
             error = "Action must be a dictionary with action_type and content."
-            reward = grade_state(self.state, self.current_task)
+            reward = normalize_score(grade_state(self.state, self.current_task))
             if self.state.step_count >= self.state.max_steps:
                 self.state.done = True
             return StepResult(
@@ -84,7 +84,7 @@ class WarehouseRobotEnv:
         if self.state.step_count >= self.state.max_steps:
             self.state.done = True
 
-        reward = grade_state(self.state, self.current_task)
+        reward = normalize_score(grade_state(self.state, self.current_task))
         return StepResult(
             observation=self.state,
             reward=reward,
