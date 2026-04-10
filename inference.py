@@ -1,252 +1,247 @@
 import json
+import os
+import textwrap
+from typing import Any, List, Optional
 
-import requests
-from requests import RequestException
-
-from config import API_BASE_URL, API_KEY, ENV_SERVER_URL, MODEL_NAME
 from my_env.env import WarehouseRobotEnv
 from my_env.graders import normalize_score
 from my_env.tasks import TASKS as TASK_DEFINITIONS
 from openai_client import get_openai_client
 
-TASKS = ["easy", "medium", "hard"]
-LOCAL_ENV = WarehouseRobotEnv()
-USE_LOCAL_ENV = False
+from config import API_BASE_URL, API_KEY, MODEL_NAME
+
+BENCHMARK = os.getenv("WAREHOUSE_BENCHMARK", "warehouse_robot_planner")
+TASK_FILTER = os.getenv("WAREHOUSE_TASK")
+MAX_STEPS = 9
+TEMPERATURE = 0.2
+MAX_TOKENS = 350
+SUCCESS_SCORE_THRESHOLD = 0.1
+
+TASKS = [TASK_FILTER] if TASK_FILTER in TASK_DEFINITIONS else ["easy", "medium", "hard"]
+
+SYSTEM_PROMPT = textwrap.dedent(
+    """
+    You are operating a warehouse management robot planner environment.
+
+    On each turn, return exactly one JSON object with this shape:
+    {
+      "action_type": "identify_goal | generate_robot_plan | assign_robot | suggest_resources | set_zone_route | add_safety_checks | set_battery_strategy | set_priority | finalize",
+      "content": "string or list"
+    }
+
+    Rules:
+    - Use only the listed action_type values.
+    - Choose the next best single action based on the current observation.
+    - Keep warehouse planning realistic and safety-aware.
+    - If the plan is already complete, return finalize.
+    - Return strict JSON only.
+    """
+).strip()
 
 
-def log_start(task):
-    print(f"[START] task={task} env=warehouse_robot_env model={MODEL_NAME}", flush=True)
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
-def log_step(step, action, reward, done, error):
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
     reward = normalize_score(reward)
+    error_val = error if error else "null"
+    done_val = str(done).lower()
     print(
-        f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error or 'null'}",
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}",
         flush=True,
     )
 
 
-def log_end(success, steps, rewards):
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    score = normalize_score(score)
     rewards_str = ",".join(f"{normalize_score(r):.2f}" for r in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
         flush=True,
     )
 
 
-def local_post(path, payload):
-    if path == "/reset":
-        return LOCAL_ENV.reset(payload.get("task_name", "easy")).model_dump()
-    if path == "/step":
-        return LOCAL_ENV.step(payload).model_dump()
-    if path == "/state":
-        return LOCAL_ENV.state_dict()
-    raise ValueError(f"Unsupported path: {path}")
+def build_user_prompt(task_name: str, step: int, observation: dict, last_reward: float, history: List[str]) -> str:
+    task = TASK_DEFINITIONS[task_name]
+    history_block = "\n".join(history[-5:]) if history else "None"
+    return textwrap.dedent(
+        f"""
+        Task: {task_name}
+        Difficulty: {task["difficulty"]}
+        Warehouse request: {task["user_input"]}
+        Expected goal: {task["expected_goal"]}
+        Keywords: {", ".join(task["expected_keywords"])}
+        Feedback: {task["feedback"]}
+
+        Step: {step}
+        Last reward: {last_reward:.2f}
+        Current observation JSON:
+        {json.dumps(observation, indent=2)}
+
+        Previous actions:
+        {history_block}
+
+        Choose exactly one next action.
+        """
+    ).strip()
 
 
-def post(path, payload):
-    url = f"{ENV_SERVER_URL}{path}"
-    global USE_LOCAL_ENV
-
-    if USE_LOCAL_ENV:
-        return local_post(path, payload)
-
-    try:
-        response = requests.post(url, json=payload, timeout=30)
-        response.raise_for_status()
-        return response.json()
-    except (RequestException, ValueError):
-        USE_LOCAL_ENV = True
-        return local_post(path, payload)
-
-
-def default_steps(task_name):
-    if task_name == "easy":
-        return [
-            {
-                "action_type": "identify_goal",
-                "content": "Move one inbound package from the receiving zone to rack B2 in the storage zone with a safe scan and place workflow.",
-            },
-            {
-                "action_type": "generate_robot_plan",
-                "content": [
-                    "Scan the package at receiving zone",
-                    "Pick the package with the picker robot",
-                    "Move through the receiving-to-storage route toward rack B2",
-                    "Place the package on rack B2 and confirm inventory update",
-                ],
-            },
-            {"action_type": "assign_robot", "content": "picker robot with medium payload support"},
-            {"action_type": "suggest_resources", "content": ["barcode scanner", "cart", "pallet support"]},
-            {
-                "action_type": "set_zone_route",
-                "content": "Start in receiving zone, travel through the main storage corridor, stop at rack B2 in storage zone, then clear the aisle.",
-            },
-            {
-                "action_type": "add_safety_checks",
-                "content": ["collision avoidance", "load validation", "fragile item handling check"],
-            },
-            {"action_type": "finalize", "content": "Warehouse robot plan confirmed."},
-        ]
-
-    if task_name == "medium":
-        return [
-            {
-                "action_type": "identify_goal",
-                "content": "Pick three products from shelves A1, B4, and C2, then deliver them to the packing zone with scan-confirm-place workflow.",
-            },
-            {
-                "action_type": "generate_robot_plan",
-                "content": [
-                    "Start in storage zone and scan item at shelf A1",
-                    "Continue to shelf B4 and pick the second item with load-balanced storage bin",
-                    "Collect the third item from shelf C2 and confirm all three picks",
-                    "Move inventory to packing zone for handoff and packing confirmation",
-                ],
-            },
-            {"action_type": "assign_robot", "content": "carrier robot optimized for multi-stop picking"},
-            {"action_type": "suggest_resources", "content": ["barcode scanner", "cart", "conveyor"]},
-            {
-                "action_type": "set_zone_route",
-                "content": "Route through storage zone shelves A1 to B4 to C2, then take the packing lane to packing zone for final confirmation.",
-            },
-            {
-                "action_type": "add_safety_checks",
-                "content": ["collision avoidance", "busy zone speed reduction", "weight/load validation"],
-            },
-            {"action_type": "set_battery_strategy", "content": "Use a robot above 60 percent battery to complete the multi-stop route without recharge delay."},
-            {"action_type": "set_priority", "content": "normal"},
-            {"action_type": "finalize", "content": "Warehouse picking mission approved."},
-        ]
-
-    return [
-        {
+def heuristic_action(observation: dict) -> dict[str, Any]:
+    if not observation.get("goal"):
+        return {
             "action_type": "identify_goal",
-            "content": "Complete an urgent hospital supply order by collecting five items, rerouting around blocked aisle C, using a battery-ready robot, and delivering to dispatch zone in priority mode.",
-        },
-        {
+            "content": "Convert the warehouse request into a safe robot execution goal with correct zone movement and completion criteria.",
+        }
+
+    if len(observation.get("robot_plan", [])) < 4:
+        return {
             "action_type": "generate_robot_plan",
             "content": [
-                "Mark the order as urgent priority and lock the dispatch window",
-                "Pick and scan the five hospital supply items from storage shelves while avoiding blocked aisle C",
-                "Reroute through the alternate north corridor and validate the load before long travel",
-                "Move inventory to dispatch zone, place on outbound pallet, and confirm shipment release",
+                "Pick the required inventory from the source zone",
+                "Move through the planned warehouse route",
+                "Scan and place the inventory at the destination",
+                "Confirm task completion and inventory update",
             ],
-        },
-        {"action_type": "assign_robot", "content": "forklift robot with high-capacity load support and priority dispatch profile"},
-        {"action_type": "suggest_resources", "content": ["barcode scanner", "forklift attachment", "pallet support", "conveyor"]},
-        {
+        }
+
+    if not observation.get("assigned_robot"):
+        return {"action_type": "assign_robot", "content": "carrier robot with warehouse route support"}
+
+    if not observation.get("tools_or_resources"):
+        return {"action_type": "suggest_resources", "content": ["barcode scanner", "cart", "pallet support"]}
+
+    if not observation.get("zone_route"):
+        return {
             "action_type": "set_zone_route",
-            "content": "Travel from storage zone through the north reroute, bypass blocked aisle C, avoid the restricted cold-storage corridor, and finish in dispatch zone.",
-        },
-        {
+            "content": "Travel through the relevant warehouse zones while avoiding busy aisles and confirming destination access.",
+        }
+
+    if len(observation.get("safety_checks", [])) < 2:
+        return {
             "action_type": "add_safety_checks",
-            "content": ["collision avoidance", "overload check", "restricted zone warning", "fragile item handling check"],
-        },
-        {
+            "content": ["collision avoidance", "overload check", "restricted zone warning"],
+        }
+
+    if not observation.get("battery_strategy"):
+        return {
             "action_type": "set_battery_strategy",
-            "content": "Assign only a robot above 75 percent battery; if battery drops below 30 percent mid-mission, hand off the load at a safe transfer point to a charged backup robot.",
-        },
-        {"action_type": "set_priority", "content": "urgent hospital shipment"},
-        {"action_type": "finalize", "content": "Urgent warehouse execution plan confirmed."},
-    ]
+            "content": "Assign a robot with sufficient battery and switch to a charged backup robot if battery drops below the safe threshold.",
+        }
+
+    if not observation.get("priority_level"):
+        return {"action_type": "set_priority", "content": "normal"}
+
+    return {"action_type": "finalize", "content": "Warehouse robot execution plan confirmed."}
 
 
-def _extract_text_content(response) -> str:
-    if hasattr(response, "output_text") and response.output_text:
-        return response.output_text
-    if hasattr(response, "choices") and response.choices:
-        message = response.choices[0].message
-        content = getattr(message, "content", "")
-        if isinstance(content, str):
-            return content
-    return ""
+def sanitize_action(action: Any, observation: dict) -> dict[str, Any]:
+    valid_actions = {
+        "identify_goal",
+        "generate_robot_plan",
+        "assign_robot",
+        "suggest_resources",
+        "set_zone_route",
+        "add_safety_checks",
+        "set_battery_strategy",
+        "set_priority",
+        "finalize",
+    }
+
+    if not isinstance(action, dict):
+        return heuristic_action(observation)
+
+    action_type = str(action.get("action_type", "")).strip()
+    content = action.get("content", "")
+
+    if action_type not in valid_actions:
+        return heuristic_action(observation)
+
+    if action_type in {"generate_robot_plan", "suggest_resources", "add_safety_checks"} and not isinstance(content, list):
+        return heuristic_action(observation)
+
+    if action_type not in {"generate_robot_plan", "suggest_resources", "add_safety_checks"} and isinstance(content, list):
+        content = " ".join(str(item) for item in content)
+
+    return {"action_type": action_type, "content": content}
 
 
-def generate_steps_with_llm(task_name):
+def get_model_action(task_name: str, step: int, observation: dict, last_reward: float, history: List[str]) -> dict[str, Any]:
     if not API_KEY or not API_BASE_URL:
-        return default_steps(task_name)
+        return heuristic_action(observation)
 
-    task = TASK_DEFINITIONS[task_name]
     client = get_openai_client()
-    prompt = f"""
-You are planning warehouse robot actions for an OpenEnv task.
-Return JSON only with this shape:
-{{
-  "steps": [
-    {{"action_type": "identify_goal", "content": "string"}},
-    {{"action_type": "generate_robot_plan", "content": ["step 1", "step 2", "step 3", "step 4"]}},
-    {{"action_type": "assign_robot", "content": "string"}},
-    {{"action_type": "suggest_resources", "content": ["item1", "item2"]}},
-    {{"action_type": "set_zone_route", "content": "string"}},
-    {{"action_type": "add_safety_checks", "content": ["item1", "item2"]}},
-    {{"action_type": "set_battery_strategy", "content": "string"}},
-    {{"action_type": "set_priority", "content": "string"}},
-    {{"action_type": "finalize", "content": "string"}}
-  ]
-}}
-
-Rules:
-- Keep action types exactly as listed above.
-- Use warehouse robotics language only.
-- Include receiving, storage, packing, or dispatch zones when relevant.
-- Include robot assignment, resource suggestions, safety checks, and battery-aware planning.
-- For easy tasks you may omit set_battery_strategy or set_priority if not needed.
-- Ensure the last action is finalize.
-
-Task difficulty: {task["difficulty"]}
-Warehouse request: {task["user_input"]}
-Expected goal: {task["expected_goal"]}
-Expected keywords: {", ".join(task["expected_keywords"])}
-Feedback: {task["feedback"]}
-""".strip()
+    user_prompt = build_user_prompt(task_name, step, observation, last_reward, history)
 
     try:
-        response = client.chat.completions.create(
+        completion = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "You are a warehouse management robot planner that returns strict JSON only."},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
             ],
-            temperature=0.2,
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+            stream=False,
             response_format={"type": "json_object"},
         )
-        content = response.choices[0].message.content or _extract_text_content(response)
-        payload = json.loads(content)
-        steps = payload.get("steps", [])
-        if isinstance(steps, list) and steps:
-            return steps
+        text = (completion.choices[0].message.content or "").strip()
+        return sanitize_action(json.loads(text), observation)
     except Exception:
-        return default_steps(task_name)
-
-    return default_steps(task_name)
+        return heuristic_action(observation)
 
 
-def run_task(task_name):
-    log_start(task_name)
-    rewards = []
+def compute_score(rewards: List[float]) -> float:
+    if not rewards:
+        return normalize_score(0.5)
+    average_reward = sum(normalize_score(value) for value in rewards) / len(rewards)
+    return normalize_score(average_reward)
 
-    post("/reset", {"task_name": task_name})
+
+def run_task(task_name: str) -> None:
+    env = WarehouseRobotEnv()
+    history: List[str] = []
+    rewards: List[float] = []
+    steps_taken = 0
+    last_reward = 0.0
     success = False
-    step_num = 0
 
-    for action in generate_steps_with_llm(task_name):
-        step_num += 1
-        result = post("/step", action)
-        reward = normalize_score(result.get("reward"))
-        done = result["done"]
-        error = result.get("error")
-        rewards.append(reward)
+    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
 
-        log_step(step_num, action["action_type"], reward, done, error)
+    state = env.reset(task_name)
+    observation = state.model_dump()
 
-        if done:
-            success = reward >= 0.75
+    for step in range(1, MAX_STEPS + 1):
+        if observation.get("done"):
             break
 
-    log_end(success, step_num, rewards)
+        action = get_model_action(task_name, step, observation, last_reward, history)
+        result = env.step(action)
+
+        reward = normalize_score(result.reward)
+        done = result.done
+        error = result.error
+
+        rewards.append(reward)
+        steps_taken = step
+        last_reward = reward
+        observation = result.observation.model_dump()
+
+        log_step(step=step, action=action["action_type"], reward=reward, done=done, error=error)
+        history.append(f"Step {step}: {json.dumps(action)} -> reward {reward:.2f}")
+
+        if done:
+            break
+
+    score = compute_score(rewards)
+    success = score >= SUCCESS_SCORE_THRESHOLD
+    log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+
+
+def main() -> None:
+    for task_name in TASKS:
+        run_task(task_name)
 
 
 if __name__ == "__main__":
-    for task in TASKS:
-        run_task(task)
+    main()
