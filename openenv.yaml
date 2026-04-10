@@ -1,5 +1,5 @@
-name: job-readiness-task-planner
-description: An OpenEnv environment where an AI agent turns vague job-readiness requests into structured actionable plans.
+name: warehouse-robot-planner
+description: An OpenEnv environment where an AI agent converts warehouse requests into structured robot execution plans with routing, safety, battery, and priority logic.
 version: "1.0.0"
 
 entrypoint:

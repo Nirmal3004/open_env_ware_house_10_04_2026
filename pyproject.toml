@@ -1,7 +1,7 @@
 [project]
 name = "aadil-env"
 version = "0.1.0"
-description = "OpenEnv Job Readiness Environment"
+description = "OpenEnv Warehouse Management Robot Planner"
 authors = [
   { name = "Nirmal Raj", email = "nirmalraj9607@gmail.com" }
 ]
@@ -20,4 +20,4 @@ dependencies = [
 server = "server.app:main"
 
 [tool.openenv]
-env = "my_env.env:JobReadinessEnv"
+env = "my_env.env:WarehouseRobotEnv"

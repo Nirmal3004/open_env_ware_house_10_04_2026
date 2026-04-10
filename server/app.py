@@ -1,15 +1,13 @@
 from typing import Any
 
-from fastapi import Body
-from fastapi import FastAPI
-from fastapi import HTTPException
-from pydantic import BaseModel
 import uvicorn
+from fastapi import Body, FastAPI, HTTPException
+from pydantic import BaseModel
 
-from my_env.env import JobReadinessEnv
+from my_env.env import WarehouseRobotEnv
 
-app = FastAPI(title="Job Readiness Task Planner Environment")
-env = JobReadinessEnv()
+app = FastAPI(title="Warehouse Management Robot Planner Environment")
+env = WarehouseRobotEnv()
 
 
 class ResetRequest(BaseModel):
@@ -23,7 +21,7 @@ class StepRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"message": "Job Readiness OpenEnv is running"}
+    return {"message": "Warehouse Management Robot Planner OpenEnv is running"}
 
 
 @app.post("/reset")
@@ -31,9 +29,9 @@ def reset(
     req: ResetRequest | None = Body(
         default=None,
         examples={
-            "easy": {"summary": "Easy task", "value": {"task_name": "easy"}},
-            "medium": {"summary": "Medium task", "value": {"task_name": "medium"}},
-            "hard": {"summary": "Hard task", "value": {"task_name": "hard"}},
+            "easy": {"summary": "Easy warehouse task", "value": {"task_name": "easy"}},
+            "medium": {"summary": "Medium warehouse task", "value": {"task_name": "medium"}},
+            "hard": {"summary": "Hard warehouse task", "value": {"task_name": "hard"}},
         },
     )
 ):
@@ -58,21 +56,21 @@ def step(
         default=None,
         examples={
             "identify_goal": {
-                "summary": "Identify user goal",
+                "summary": "Identify the warehouse goal",
                 "value": {
                     "action_type": "identify_goal",
-                    "content": "Learn AI tools and skills for job readiness",
+                    "content": "Move one inbound package from the receiving zone to rack B2 with scan and safety checks.",
                 },
             },
-            "generate_plan": {
-                "summary": "Generate a draft plan",
+            "generate_robot_plan": {
+                "summary": "Create a robot execution plan",
                 "value": {
-                    "action_type": "generate_plan",
+                    "action_type": "generate_robot_plan",
                     "content": [
-                        "Learn Python and AI basics",
-                        "Practice SQL and beginner ML",
-                        "Build 2 projects",
-                        "Create resume and portfolio",
+                        "Scan the inbound package at receiving zone",
+                        "Pick the package with the assigned robot",
+                        "Travel through the storage route to rack B2",
+                        "Place the package and confirm the shelf update",
                     ],
                 },
             },

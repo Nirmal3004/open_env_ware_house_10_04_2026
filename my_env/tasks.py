@@ -2,25 +2,49 @@ TASKS = {
     "easy": {
         "task_id": "easy",
         "difficulty": "easy",
-        "user_input": "I want an AI job but I don't know what to learn.",
-        "expected_goal": "Learn AI tools and skills for job readiness",
-        "expected_keywords": ["AI basics", "Python", "projects", "portfolio"],
-        "feedback": ""
+        "user_input": "Move 1 package from receiving area to rack B2 safely.",
+        "expected_goal": "Transfer one inbound package from receiving zone to storage rack B2 using a safe warehouse robot workflow.",
+        "expected_keywords": [
+            "receiving zone",
+            "storage zone",
+            "rack B2",
+            "picker robot",
+            "scan",
+            "place",
+            "collision avoidance",
+        ],
+        "feedback": "Keep the plan simple, safe, and clearly tied to the inbound movement.",
     },
     "medium": {
         "task_id": "medium",
         "difficulty": "medium",
-        "user_input": "I like coding and data, maybe ML or data analyst, not sure which path to choose.",
-        "expected_goal": "Choose between ML and data analyst path and create roadmap",
-        "expected_keywords": ["data analysis", "machine learning", "SQL", "Python", "projects"],
-        "feedback": "Make the plan more structured and beginner-friendly."
+        "user_input": "Pick 3 products from shelves A1, B4, and C2 and deliver them to packing zone.",
+        "expected_goal": "Create a coordinated multi-stop picking plan from storage shelves to the packing zone with scan-confirm-place steps.",
+        "expected_keywords": [
+            "storage zone",
+            "packing zone",
+            "carrier robot",
+            "cart",
+            "scan-confirm-place",
+            "route planning",
+            "load validation",
+        ],
+        "feedback": "The plan should show shelf order, packing delivery, and realistic resource selection.",
     },
     "hard": {
         "task_id": "hard",
         "difficulty": "hard",
-        "user_input": "I finished BSc, I am weak in coding, want a job in 4 months, and I am interested in AI tools.",
-        "expected_goal": "Create a personalized AI job-readiness roadmap for a beginner with a 4-month timeline",
-        "expected_keywords": ["Python", "AI tools", "timeline", "projects", "resume"],
-        "feedback": "Need realistic timeline and simpler first steps."
-    }
+        "user_input": "Urgent hospital supply order: collect 5 items, avoid blocked aisle C, assign a robot with enough battery, and deliver to dispatch in priority mode.",
+        "expected_goal": "Plan an urgent multi-item hospital supply mission that reroutes around blocked aisle C, uses a battery-ready robot, and completes delivery to dispatch safely.",
+        "expected_keywords": [
+            "dispatch zone",
+            "priority",
+            "blocked aisle C",
+            "reroute",
+            "battery",
+            "forklift robot",
+            "restricted zone warning",
+        ],
+        "feedback": "Include rerouting, battery fallback behavior, urgent order handling, and strong safety coverage.",
+    },
 }
