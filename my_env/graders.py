@@ -21,7 +21,15 @@ def normalize_score(value) -> float:
     if score >= 1:
         return SAFE_MAX_SCORE
 
-    return round(score, 4)
+    score = round(score, 6)
+
+    if score <= 0:
+        return SAFE_MIN_SCORE
+
+    if score >= 1:
+        return SAFE_MAX_SCORE
+
+    return score
 
 
 def grade_state(state, task):
