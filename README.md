@@ -1,6 +1,6 @@
 ---
 title: Aadil_env
-emoji: ":truck:"
+emoji: "🚚"
 colorFrom: blue
 colorTo: green
 sdk: docker
