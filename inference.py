@@ -1,8 +1,12 @@
+import json
+
 import requests
 from requests import RequestException
 
-from config import ENV_SERVER_URL, MODEL_NAME
+from config import API_BASE_URL, API_KEY, ENV_SERVER_URL, MODEL_NAME
 from my_env.env import WarehouseRobotEnv
+from my_env.tasks import TASKS as TASK_DEFINITIONS
+from openai_client import get_openai_client
 
 TASKS = ["easy", "medium", "hard"]
 LOCAL_ENV = WarehouseRobotEnv()
@@ -54,7 +58,7 @@ def post(path, payload):
         return local_post(path, payload)
 
 
-def build_steps(task_name):
+def default_steps(task_name):
     if task_name == "easy":
         return [
             {
@@ -146,6 +150,76 @@ def build_steps(task_name):
     ]
 
 
+def _extract_text_content(response) -> str:
+    if hasattr(response, "output_text") and response.output_text:
+        return response.output_text
+    if hasattr(response, "choices") and response.choices:
+        message = response.choices[0].message
+        content = getattr(message, "content", "")
+        if isinstance(content, str):
+            return content
+    return ""
+
+
+def generate_steps_with_llm(task_name):
+    if not API_KEY or not API_BASE_URL:
+        return default_steps(task_name)
+
+    task = TASK_DEFINITIONS[task_name]
+    client = get_openai_client()
+    prompt = f"""
+You are planning warehouse robot actions for an OpenEnv task.
+Return JSON only with this shape:
+{{
+  "steps": [
+    {{"action_type": "identify_goal", "content": "string"}},
+    {{"action_type": "generate_robot_plan", "content": ["step 1", "step 2", "step 3", "step 4"]}},
+    {{"action_type": "assign_robot", "content": "string"}},
+    {{"action_type": "suggest_resources", "content": ["item1", "item2"]}},
+    {{"action_type": "set_zone_route", "content": "string"}},
+    {{"action_type": "add_safety_checks", "content": ["item1", "item2"]}},
+    {{"action_type": "set_battery_strategy", "content": "string"}},
+    {{"action_type": "set_priority", "content": "string"}},
+    {{"action_type": "finalize", "content": "string"}}
+  ]
+}}
+
+Rules:
+- Keep action types exactly as listed above.
+- Use warehouse robotics language only.
+- Include receiving, storage, packing, or dispatch zones when relevant.
+- Include robot assignment, resource suggestions, safety checks, and battery-aware planning.
+- For easy tasks you may omit set_battery_strategy or set_priority if not needed.
+- Ensure the last action is finalize.
+
+Task difficulty: {task["difficulty"]}
+Warehouse request: {task["user_input"]}
+Expected goal: {task["expected_goal"]}
+Expected keywords: {", ".join(task["expected_keywords"])}
+Feedback: {task["feedback"]}
+""".strip()
+
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "You are a warehouse management robot planner that returns strict JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"},
+        )
+        content = response.choices[0].message.content or _extract_text_content(response)
+        payload = json.loads(content)
+        steps = payload.get("steps", [])
+        if isinstance(steps, list) and steps:
+            return steps
+    except Exception:
+        return default_steps(task_name)
+
+    return default_steps(task_name)
+
+
 def run_task(task_name):
     log_start(task_name)
     rewards = []
@@ -154,7 +228,7 @@ def run_task(task_name):
     success = False
     step_num = 0
 
-    for action in build_steps(task_name):
+    for action in generate_steps_with_llm(task_name):
         step_num += 1
         result = post("/step", action)
         reward = result["reward"]
