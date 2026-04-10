@@ -1,7 +1,7 @@
 from typing import Any
 
 import uvicorn
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
 from my_env.env import WarehouseRobotEnv
@@ -21,7 +21,49 @@ class StepRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"message": "Warehouse Management Robot Planner OpenEnv is running"}
+    return {
+        "message": "Warehouse Management Robot Planner OpenEnv is running",
+        "endpoints": {
+            "reset": "POST /reset or GET /reset?task_name=easy",
+            "step": "POST /step or GET /step?action_type=identify_goal&content=goal",
+            "state": "GET /state",
+        },
+    }
+
+
+def _run_reset(task_name: str = "easy"):
+    state = env.reset(task_name)
+    return state.model_dump()
+
+
+def _run_step(action_type: str, content: Any = ""):
+    action_type = str(action_type).strip()
+    if not action_type:
+        raise HTTPException(
+            status_code=400,
+            detail="action_type is required.",
+        )
+
+    try:
+        result = env.step(
+            {
+                "action_type": action_type,
+                "content": content,
+            }
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result.model_dump()
+
+
+@app.get("/reset")
+def reset_get(task_name: str = Query(default="easy")):
+    return _run_reset(task_name)
+
+
+@app.get("/restep")
+def restep_get(task_name: str = Query(default="easy")):
+    return _run_reset(task_name)
 
 
 @app.post("/reset")
@@ -36,8 +78,7 @@ def reset(
     )
 ):
     task_name = "easy" if req is None else req.task_name
-    state = env.reset(task_name)
-    return state.model_dump()
+    return _run_reset(task_name)
 
 
 @app.get("/state")
@@ -83,23 +124,31 @@ def step(
             detail="Request body is required. Provide action_type and content.",
         )
 
-    action_type = str(req.get("action_type", "")).strip()
-    if not action_type:
-        raise HTTPException(
-            status_code=400,
-            detail="action_type is required.",
-        )
+    return _run_step(req.get("action_type", ""), req.get("content", ""))
 
-    try:
-        result = env.step(
-            {
-                "action_type": action_type,
-                "content": req.get("content", ""),
-            }
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return result.model_dump()
+
+@app.get("/step")
+def step_get(
+    action_type: str | None = Query(default=None),
+    content: str = Query(default=""),
+):
+    if action_type is None:
+        return {
+            "message": "Use POST /step with JSON or GET /step with query parameters.",
+            "example": "/step?action_type=identify_goal&content=Move%20package%20to%20rack%20B2",
+            "supported_actions": [
+                "identify_goal",
+                "generate_robot_plan",
+                "assign_robot",
+                "suggest_resources",
+                "set_zone_route",
+                "add_safety_checks",
+                "set_battery_strategy",
+                "set_priority",
+                "finalize",
+            ],
+        }
+    return _run_step(action_type, content)
 
 
 def main():
