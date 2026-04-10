@@ -1,0 +1,15 @@
+name: warehouse-robot-planner
+description: An OpenEnv environment where an AI agent converts warehouse requests into structured robot execution plans with routing, safety, battery, and priority logic.
+version: "1.0.0"
+
+entrypoint:
+  server: server.app:app
+
+environment:
+  observation_type: json
+  action_type: json
+
+tasks:
+  - easy
+  - medium
+  - hard
