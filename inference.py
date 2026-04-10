@@ -1,40 +1,41 @@
+import asyncio
 import json
 import os
 import textwrap
 from typing import Any, List, Optional
 
-from my_env.env import WarehouseRobotEnv
-from my_env.graders import normalize_score
-from my_env.tasks import TASKS as TASK_DEFINITIONS
-from openai_client import get_openai_client
+from openai import OpenAI
 
 from config import API_BASE_URL, API_KEY, MODEL_NAME
+from my_env.env import WarehouseRobotEnv
+from my_env.graders import normalize_score
+from my_env.models import WarehouseRobotPlannerAction
+from my_env.tasks import TASKS as TASK_DEFINITIONS
 
-BENCHMARK = os.getenv("WAREHOUSE_BENCHMARK", "warehouse_robot_planner")
-TASK_FILTER = os.getenv("WAREHOUSE_TASK")
+IMAGE_NAME = os.getenv("IMAGE_NAME")
+TASK_NAME = os.getenv("WAREHOUSE_TASK") or os.getenv("MY_ENV_V4_TASK")
+BENCHMARK = os.getenv("WAREHOUSE_BENCHMARK") or os.getenv("MY_ENV_V4_BENCHMARK") or "warehouse_robot_planner"
+
 MAX_STEPS = 9
 TEMPERATURE = 0.2
 MAX_TOKENS = 350
 SUCCESS_SCORE_THRESHOLD = 0.1
 
-TASKS = [TASK_FILTER] if TASK_FILTER in TASK_DEFINITIONS else ["easy", "medium", "hard"]
+MAX_TOTAL_REWARD = MAX_STEPS * 0.99
 
 SYSTEM_PROMPT = textwrap.dedent(
     """
-    You are operating a warehouse management robot planner environment.
+    You are interacting with a warehouse management robot planner environment.
 
-    On each turn, return exactly one JSON object with this shape:
+    On each turn, you must return exactly one JSON object with this shape:
     {
       "action_type": "identify_goal | generate_robot_plan | assign_robot | suggest_resources | set_zone_route | add_safety_checks | set_battery_strategy | set_priority | finalize",
       "content": "string or list"
     }
 
-    Rules:
-    - Use only the listed action_type values.
-    - Choose the next best single action based on the current observation.
-    - Keep warehouse planning realistic and safety-aware.
-    - If the plan is already complete, return finalize.
-    - Return strict JSON only.
+    Your goal is to maximize planning quality by building a complete, safe, warehouse robot execution plan.
+    Use warehouse robotics language only.
+    Return JSON only.
     """
 ).strip()
 
@@ -44,9 +45,9 @@ def log_start(task: str, env: str, model: str) -> None:
 
 
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
-    reward = normalize_score(reward)
     error_val = error if error else "null"
     done_val = str(done).lower()
+    reward = normalize_score(reward)
     print(
         f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}",
         flush=True,
@@ -62,80 +63,90 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
     )
 
 
-def build_user_prompt(task_name: str, step: int, observation: dict, last_reward: float, history: List[str]) -> str:
+def build_user_prompt(
+    task_name: str,
+    step: int,
+    observation: dict[str, Any],
+    last_reward: float,
+    history: List[str],
+) -> str:
     task = TASK_DEFINITIONS[task_name]
-    history_block = "\n".join(history[-5:]) if history else "None"
+    history_block = "\n".join(history[-4:]) if history else "None"
     return textwrap.dedent(
         f"""
-        Task: {task_name}
-        Difficulty: {task["difficulty"]}
-        Warehouse request: {task["user_input"]}
-        Expected goal: {task["expected_goal"]}
-        Keywords: {", ".join(task["expected_keywords"])}
-        Feedback: {task["feedback"]}
-
         Step: {step}
         Last reward: {last_reward:.2f}
-        Current observation JSON:
+        Warehouse request: {task["user_input"]}
+        Expected goal: {task["expected_goal"]}
+        Expected keywords: {", ".join(task["expected_keywords"])}
+        Feedback: {task["feedback"]}
+
+        Current observation:
         {json.dumps(observation, indent=2)}
 
-        Previous actions:
+        Previous steps:
         {history_block}
 
-        Choose exactly one next action.
+        Send your next action as one JSON object.
         """
     ).strip()
 
 
-def heuristic_action(observation: dict) -> dict[str, Any]:
+def heuristic_action(observation: dict[str, Any]) -> WarehouseRobotPlannerAction:
     if not observation.get("goal"):
-        return {
-            "action_type": "identify_goal",
-            "content": "Convert the warehouse request into a safe robot execution goal with correct zone movement and completion criteria.",
-        }
+        return WarehouseRobotPlannerAction(
+            action_type="identify_goal",
+            content="Translate the warehouse request into a clear robot execution goal with source zone, destination zone, and completion criteria.",
+        )
 
     if len(observation.get("robot_plan", [])) < 4:
-        return {
-            "action_type": "generate_robot_plan",
-            "content": [
-                "Pick the required inventory from the source zone",
+        return WarehouseRobotPlannerAction(
+            action_type="generate_robot_plan",
+            content=[
+                "Pick inventory from the source location",
                 "Move through the planned warehouse route",
-                "Scan and place the inventory at the destination",
+                "Scan and place inventory at the target location",
                 "Confirm task completion and inventory update",
             ],
-        }
+        )
 
     if not observation.get("assigned_robot"):
-        return {"action_type": "assign_robot", "content": "carrier robot with warehouse route support"}
+        return WarehouseRobotPlannerAction(
+            action_type="assign_robot",
+            content="carrier robot with route-aware warehouse navigation",
+        )
 
     if not observation.get("tools_or_resources"):
-        return {"action_type": "suggest_resources", "content": ["barcode scanner", "cart", "pallet support"]}
+        return WarehouseRobotPlannerAction(
+            action_type="suggest_resources",
+            content=["barcode scanner", "cart", "pallet support"],
+        )
 
     if not observation.get("zone_route"):
-        return {
-            "action_type": "set_zone_route",
-            "content": "Travel through the relevant warehouse zones while avoiding busy aisles and confirming destination access.",
-        }
+        return WarehouseRobotPlannerAction(
+            action_type="set_zone_route",
+            content="Move through the required warehouse zones while avoiding blocked aisles and busy corridors.",
+        )
 
     if len(observation.get("safety_checks", [])) < 2:
-        return {
-            "action_type": "add_safety_checks",
-            "content": ["collision avoidance", "overload check", "restricted zone warning"],
-        }
+        return WarehouseRobotPlannerAction(
+            action_type="add_safety_checks",
+            content=["collision avoidance", "overload check", "restricted zone warning"],
+        )
 
     if not observation.get("battery_strategy"):
-        return {
-            "action_type": "set_battery_strategy",
-            "content": "Assign a robot with sufficient battery and switch to a charged backup robot if battery drops below the safe threshold.",
-        }
+        return WarehouseRobotPlannerAction(
+            action_type="set_battery_strategy",
+            content="Assign a sufficiently charged robot and switch to a backup robot if battery drops below the safe threshold.",
+        )
 
     if not observation.get("priority_level"):
-        return {"action_type": "set_priority", "content": "normal"}
+        return WarehouseRobotPlannerAction(action_type="set_priority", content="normal")
 
-    return {"action_type": "finalize", "content": "Warehouse robot execution plan confirmed."}
+    return WarehouseRobotPlannerAction(action_type="finalize", content="Warehouse robot execution plan confirmed.")
 
 
-def sanitize_action(action: Any, observation: dict) -> dict[str, Any]:
+def sanitize_action(action: Any, observation: dict[str, Any]) -> WarehouseRobotPlannerAction:
     valid_actions = {
         "identify_goal",
         "generate_robot_plan",
@@ -157,22 +168,24 @@ def sanitize_action(action: Any, observation: dict) -> dict[str, Any]:
     if action_type not in valid_actions:
         return heuristic_action(observation)
 
-    if action_type in {"generate_robot_plan", "suggest_resources", "add_safety_checks"} and not isinstance(content, list):
-        return heuristic_action(observation)
-
-    if action_type not in {"generate_robot_plan", "suggest_resources", "add_safety_checks"} and isinstance(content, list):
+    if action_type in {"generate_robot_plan", "suggest_resources", "add_safety_checks"}:
+        if not isinstance(content, list):
+            return heuristic_action(observation)
+    elif isinstance(content, list):
         content = " ".join(str(item) for item in content)
 
-    return {"action_type": action_type, "content": content}
+    return WarehouseRobotPlannerAction(action_type=action_type, content=content)
 
 
-def get_model_action(task_name: str, step: int, observation: dict, last_reward: float, history: List[str]) -> dict[str, Any]:
-    if not API_KEY or not API_BASE_URL:
-        return heuristic_action(observation)
-
-    client = get_openai_client()
+def get_model_action(
+    client: OpenAI,
+    task_name: str,
+    step: int,
+    observation: dict[str, Any],
+    last_reward: float,
+    history: List[str],
+) -> WarehouseRobotPlannerAction:
     user_prompt = build_user_prompt(task_name, step, observation, last_reward, history)
-
     try:
         completion = client.chat.completions.create(
             model=MODEL_NAME,
@@ -186,62 +199,67 @@ def get_model_action(task_name: str, step: int, observation: dict, last_reward: 
             response_format={"type": "json_object"},
         )
         text = (completion.choices[0].message.content or "").strip()
+        if not text:
+            return heuristic_action(observation)
         return sanitize_action(json.loads(text), observation)
     except Exception:
         return heuristic_action(observation)
 
 
 def compute_score(rewards: List[float]) -> float:
-    if not rewards:
-        return normalize_score(0.5)
-    average_reward = sum(normalize_score(value) for value in rewards) / len(rewards)
-    return normalize_score(average_reward)
+    total_reward = sum(normalize_score(reward) for reward in rewards)
+    raw_score = total_reward / MAX_TOTAL_REWARD if MAX_TOTAL_REWARD > 0 else 0.5
+    return normalize_score(raw_score)
 
 
-def run_task(task_name: str) -> None:
-    env = WarehouseRobotEnv()
-    history: List[str] = []
-    rewards: List[float] = []
-    steps_taken = 0
-    last_reward = 0.0
-    success = False
+async def main() -> None:
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    task_names = [TASK_NAME] if TASK_NAME in TASK_DEFINITIONS else ["easy", "medium", "hard"]
 
-    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
+    for task_name in task_names:
+        env = WarehouseRobotEnv()
+        history: List[str] = []
+        rewards: List[float] = []
+        steps_taken = 0
+        score = 0.0
+        success = False
 
-    state = env.reset(task_name)
-    observation = state.model_dump()
+        log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
 
-    for step in range(1, MAX_STEPS + 1):
-        if observation.get("done"):
-            break
+        try:
+            state = env.reset(task_name)
+            observation = state.model_dump()
+            last_reward = 0.0
 
-        action = get_model_action(task_name, step, observation, last_reward, history)
-        result = env.step(action)
+            for step in range(1, MAX_STEPS + 1):
+                if observation.get("done"):
+                    break
 
-        reward = normalize_score(result.reward)
-        done = result.done
-        error = result.error
+                action = get_model_action(client, task_name, step, observation, last_reward, history)
+                result = env.step(action.model_dump())
 
-        rewards.append(reward)
-        steps_taken = step
-        last_reward = reward
-        observation = result.observation.model_dump()
+                reward = normalize_score(result.reward)
+                done = result.done
+                error = result.error
 
-        log_step(step=step, action=action["action_type"], reward=reward, done=done, error=error)
-        history.append(f"Step {step}: {json.dumps(action)} -> reward {reward:.2f}")
+                rewards.append(reward)
+                steps_taken = step
+                observation = result.observation.model_dump()
+                last_reward = reward
 
-        if done:
-            break
+                log_step(step=step, action=action.action_type, reward=reward, done=done, error=error)
+                history.append(f"Step {step}: {action.model_dump_json()} -> reward {reward:+.2f}")
 
-    score = compute_score(rewards)
-    success = score >= SUCCESS_SCORE_THRESHOLD
-    log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+                if done:
+                    break
 
+            score = compute_score(rewards)
+            success = score >= SUCCESS_SCORE_THRESHOLD
 
-def main() -> None:
-    for task_name in TASKS:
-        run_task(task_name)
+        finally:
+            await asyncio.sleep(0)
+            log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
