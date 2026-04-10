@@ -1,9 +1,9 @@
 def _clamp_score(score: float) -> float:
-    return round(min(max(score, 0.01), 0.99), 2)
+    return round(min(max(score, 0.02), 0.98), 2)
 
 
 def grade_state(state, task):
-    score = 0.01
+    score = 0.02
 
     goal_text = (state.goal or "").lower()
     plan_text = " ".join(state.robot_plan).lower()
